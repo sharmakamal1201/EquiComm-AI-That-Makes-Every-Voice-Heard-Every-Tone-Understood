@@ -51,7 +51,7 @@ Real-time audio adaptation (listen in your own accent) and transcript suggestion
 - **Vocabulary Normalization**: Translate regional terms to standard equivalents
 - **Accessibility Enhancement**: Improve understanding across diverse linguistic backgrounds
 
-## � Impact
+## 🌟 Impact
 
 EquiComm makes these invisible barriers visible and actionable, transforming meetings in corporations, government councils, educational settings, and global teams. By ensuring every voice is heard and every tone is understood, EquiComm drives real inclusivity, accessibility, and clarity—wherever people meet.
 
@@ -67,13 +67,14 @@ Makes diverse classrooms more accessible for students with different backgrounds
 ### 🌐 Global Teams 
 Reduces misinterpretation and improves cultural understanding in real-time collaboration.
 
-## �🏗️ Architecture
+## 🏗️ Architecture
 
 EquiComm follows a modular, plugin-based architecture:
 
 ```
 EquiComm/
 ├── main.py                 # Main entry point
+├── main_test_live_mic.py   # Main entry point for live testing
 ├── config.py              # Configuration settings
 ├── requirements.txt       # Python dependencies
 ├── utils/                 # Core utilities
@@ -84,7 +85,7 @@ EquiComm/
 │   ├── voice_equity/          # Voice analytics
 │   ├── emotion_transcript/    # Emotion detection
 │   └── accent_vocab_neutral/  # Language normalization
-└── Weekly Meeting Example.mp3 # Sample audio file
+└── Sample_audio_file.mp3 # Sample audio file
 ```
 
 ## 🛠️ Installation
@@ -99,7 +100,6 @@ EquiComm/
    ```bash
    pip install -r requirements.txt
    ```
-   *Note: Dependencies optimized for performance using faster_whisper (instead of standard whisper) and includes audio processing libraries for enhanced accuracy.*
 
 3. **Download required models** (automatic on first run):
    - Whisper for transcription

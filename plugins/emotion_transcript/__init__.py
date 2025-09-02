@@ -1,0 +1,1 @@
+# Emotion Transcript plugin

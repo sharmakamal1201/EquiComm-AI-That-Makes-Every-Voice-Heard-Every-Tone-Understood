@@ -1,0 +1,10 @@
+transformers
+torch
+torchaudio
+faster_whisper
+soundfile
+librosa
+deepmultilingualpunctuation
+pandas
+matplotlib
+numpy

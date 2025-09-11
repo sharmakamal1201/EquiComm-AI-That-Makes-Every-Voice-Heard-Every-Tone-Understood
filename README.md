@@ -96,12 +96,17 @@ EquiComm/
    cd EquiComm
    ```
 
-2. **Install dependencies**:
+2. **Install python**:
+   ```bash
+   Recommended: Python 3.13.7 (in virtual environment)
+   ```
+
+3. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Download required models** (automatic on first run):
+4. **Download required models** (automatic on first run):
    - Whisper for transcription
    - Transformers models for emotion detection
    - Gender classification models

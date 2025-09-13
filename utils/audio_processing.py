@@ -71,6 +71,7 @@ def process_audio_file(input_path: str, output_path: str, noise_factor: float = 
     audio_data, sample_rate = librosa.load(input_path, sr=None)
     log_info(f"Applying noise reduction: {input_path}")
     cleaned_audio = reduce_noise(audio_data, sample_rate, noise_factor)
+    log_debug(f"Saving cleaned audio to: {output_path}")
     sf.write(output_path, cleaned_audio, sample_rate)
 
 

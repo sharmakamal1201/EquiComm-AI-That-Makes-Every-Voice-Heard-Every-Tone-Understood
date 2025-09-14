@@ -10,7 +10,7 @@ from typing import List
 from utils.print_helpers import log_debug, log_error, log_info
 
 
-def reduce_noise(audio_data: np.ndarray, sample_rate: int, noise_factor: float = 0.15, min_gain: float = 0.1) -> np.ndarray:
+def reduce_noise(audio_data: np.ndarray, sample_rate: int, noise_factor: float = 0.15, min_gain: float = 0.2) -> np.ndarray:
     """
     Apply gentle noise reduction to audio while preserving voice quality.
     Uses spectral gating to reduce background noise without over-compressing.
@@ -19,7 +19,7 @@ def reduce_noise(audio_data: np.ndarray, sample_rate: int, noise_factor: float =
         audio_data: Input audio as numpy array
         sample_rate: Sample rate of the audio
         noise_factor: Factor for noise threshold (higher = more aggressive)
-        min_gain: Minimum gain to preserve voice (0.1 = don't reduce below 10%)
+        min_gain: Minimum gain to preserve voice (0.2 = don't reduce below 20%)
     
     Returns:
         Cleaned audio as numpy array
@@ -44,7 +44,7 @@ def reduce_noise(audio_data: np.ndarray, sample_rate: int, noise_factor: float =
     
     # Apply gentle smoothing to avoid artifacts
     from scipy.ndimage import gaussian_filter1d
-    mask = gaussian_filter1d(mask.astype(float), sigma=1.0, axis=1)
+    mask = gaussian_filter1d(mask.astype(float), sigma=0.8, axis=1)
     
     # Apply mask with minimum gain to preserve voice
     mask = np.maximum(mask, min_gain)
@@ -57,6 +57,45 @@ def reduce_noise(audio_data: np.ndarray, sample_rate: int, noise_factor: float =
     cleaned_audio = librosa.istft(cleaned_stft, hop_length=512)
     
     return cleaned_audio
+
+import librosa
+import numpy as np
+
+def analyze_pitch(audio_file, sr=16000):
+    # Load audio (mono, resampled to 16kHz for consistency)
+    y, sr = librosa.load(audio_file, sr=sr, mono=True)
+
+    # Extract pitch using probabilistic YIN (pyin)
+    f0, voiced_flag, voiced_probs = librosa.pyin(
+        y,
+        fmin=librosa.note_to_hz('C2'),   # ~65 Hz
+        fmax=librosa.note_to_hz('C7')    # ~2093 Hz
+    )
+
+    # Keep only voiced pitch values
+    f0_clean = f0[~np.isnan(f0)]
+
+    if len(f0_clean) == 0:
+        print("❌ No pitch detected (maybe silence or noise)")
+        return None
+
+    # Compute stats
+    pitch_min = np.min(f0_clean)
+    pitch_max = np.max(f0_clean)
+    pitch_median = np.median(f0_clean)
+    pitch_mean = np.mean(f0_clean)
+
+    print(f"Pitch Analysis for {audio_file}:")
+    print(f"  Range: {pitch_min:.2f} Hz – {pitch_max:.2f} Hz")
+    print(f"  Median: {pitch_median:.2f} Hz")
+    print(f"  Mean: {pitch_mean:.2f} Hz")
+
+    return {
+        "min": pitch_min,
+        "max": pitch_max,
+        "median": pitch_median,
+        "mean": pitch_mean
+    }
 
 
 def process_audio_file(input_path: str, output_path: str, noise_factor: float = 0.15) -> None:

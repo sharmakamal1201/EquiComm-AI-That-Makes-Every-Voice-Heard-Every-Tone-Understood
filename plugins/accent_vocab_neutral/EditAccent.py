@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
 from openvoice import se_extractor
 from openvoice.api import ToneColorConverter
 from utils.print_helpers import log_debug, log_error, log_info, log_output
-from utils.audio_processing import process_audio_file, create_temp_file, cleanup_temp_files
+from utils.audio_processing import process_audio_file, create_temp_file, cleanup_temp_files, analyze_pitch
 
 def load_accent_models(ckpt_converter: str):
     """Load the OpenVoice models and return the converter."""
@@ -75,7 +75,10 @@ def change_accent_ai(input_path, reference_path, output_path, ckpt_base, ckpt_co
         # Apply noise reduction to input and reference files
         process_audio_file(input_path, temp_input)
         process_audio_file(reference_path, temp_reference)
-        
+
+        analyze_pitch(temp_input)
+        analyze_pitch(temp_reference)
+
         log_info("Noise reduction applied.")
         
         # Load models
@@ -107,6 +110,8 @@ if __name__ == '__main__':
     ckpt_converter = 'D:\\Global Hackathon - 2025\\EquiComm\\plugins\\accent_vocab_neutral\\checkpoints\\converter'
     
     try:
-        change_accent_ai(INPUT_FILE_AI, REFERENCE_ACCENT_FILE, OUTPUT_FILE_AI, ckpt_base, ckpt_converter)
+        analyze_pitch(INPUT_FILE_AI)
+        analyze_pitch(REFERENCE_ACCENT_FILE)
+        #change_accent_ai(INPUT_FILE_AI, REFERENCE_ACCENT_FILE, OUTPUT_FILE_AI, ckpt_base, ckpt_converter)
     except Exception as e:
         log_error(f"An error occurred: {e}")

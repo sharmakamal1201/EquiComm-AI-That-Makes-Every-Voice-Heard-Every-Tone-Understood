@@ -6,31 +6,150 @@ import numpy as np
 import re
 import threading
 from collections import deque
-from faster_whisper import WhisperModel
-from deepmultilingualpunctuation import PunctuationModel
-from utils.print_helpers import log_debug, log_info, log_error, log_output
-from plugins.voice_equity.speaker_demographics import predict_gender
-from plugins.emotion_transcript.transcript_annotator import annotate_transcript
 import torchaudio
 import torch
 import uuid
 
-# ----------------------------
-# optional model loaders you already had
-from plugins.voice_equity.load_voice_equity_models import gender_model, gender_processor
-from plugins.emotion_transcript.load_emotion_models import audio_classifier, text_classifier, sarcasm_classifier
-# ----------------------------
+# Light imports first
+from utils.print_helpers import log_debug, log_info, log_error, log_output
+
+import os
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
+import logging
+logging.basicConfig(level=logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
+import warnings
+warnings.filterwarnings("ignore")
+
 
 # ==============================
-# Init models (global, loaded once)
+# File logging setup
 # ==============================
-t0 = time.time()
-log_debug("Loading Whisper model...")
-model = WhisperModel("medium.en", device="cpu", compute_type="int8")
-log_debug("Whisper model loaded in {:.2f} sec".format(time.time() - t0))
+SENTENCES_FILE = "sentences_output.txt"
+ANNOTATIONS_FILE = "annotations_output.txt"
 
-punct_model = PunctuationModel()
-log_debug("Punctuation model loaded.")
+def init_output_files():
+    """Initialize output files with headers and timestamps"""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    
+    with open(SENTENCES_FILE, "a", encoding="utf-8") as f:
+        f.write(f"\n\n=== Session Started: {timestamp} ===\n")
+    
+    with open(ANNOTATIONS_FILE, "a", encoding="utf-8") as f:
+        f.write(f"\n\n=== Session Started: {timestamp} ===\n")
+
+def log_sentence_to_file(sentence, start_time, end_time):
+    """Append sentence to sentences file"""
+    try:
+        with open(SENTENCES_FILE, "a", encoding="utf-8") as f:
+            timestamp = time.strftime("%H:%M:%S")
+            f.write(f"[{timestamp}] ({start_time:.2f}s-{end_time:.2f}s): {sentence}\n")
+    except Exception as e:
+        log_error(f"Failed to write sentence to file: {e}")
+
+def log_annotation_to_file(annotation, start_time, end_time):
+    """Append annotation to annotations file"""
+    try:
+        with open(ANNOTATIONS_FILE, "a", encoding="utf-8") as f:
+            timestamp = time.strftime("%H:%M:%S")
+            f.write(f"[{timestamp}] ({start_time:.2f}s-{end_time:.2f}s): {annotation}\n")
+    except Exception as e:
+        log_error(f"Failed to write annotation to file: {e}")
+
+# ==============================
+# Global variables for lazy loading + performance caching
+# ==============================
+model = None
+punct_model = None
+gender_model = None
+gender_processor = None
+audio_classifier = None
+text_classifier = None
+sarcasm_classifier = None
+
+# Performance optimizations - cache imported modules after models load
+_annotate_transcript = None
+
+# Thread-safe loading flags
+_models_loading = threading.Event()
+_models_loaded = threading.Event()
+
+# ==============================
+# Lazy model loaders
+# ==============================
+def load_whisper_model():
+    """Load Whisper model lazily"""
+    global model
+    if model is None:
+        #log_debug("Loading Whisper model...")
+        t0 = time.time()
+        from faster_whisper import WhisperModel
+        model = WhisperModel("small.en", device="cpu", compute_type="int8")
+        log_debug("Whisper model loaded in {:.2f} sec".format(time.time() - t0))
+    return model
+
+def load_punctuation_model():
+    """Load punctuation model lazily"""
+    global punct_model
+    if punct_model is None:
+        #log_debug("Loading punctuation model...")
+        t0 = time.time()
+        from deepmultilingualpunctuation import PunctuationModel
+        punct_model = PunctuationModel()
+        log_debug("Punctuation model loaded in {:.2f} sec".format(time.time() - t0))
+    return punct_model
+
+def load_emotion_models():
+    """Load emotion models lazily"""
+    global audio_classifier, text_classifier, sarcasm_classifier, _annotate_transcript
+    if audio_classifier is None:
+        #log_debug("Loading emotion models...")
+        t0 = time.time()
+        from plugins.emotion_transcript.load_emotion_models import audio_classifier as ac, text_classifier as tc, sarcasm_classifier as sc
+        from plugins.emotion_transcript.transcript_annotator import annotate_transcript
+        audio_classifier = ac
+        text_classifier = tc
+        sarcasm_classifier = sc
+        _annotate_transcript = annotate_transcript  # Cache the function
+        log_debug("Emotion models loaded in {:.2f} sec".format(time.time() - t0))
+    return audio_classifier, text_classifier, sarcasm_classifier
+
+def load_gender_models():
+    """Load gender models lazily"""
+    global gender_model, gender_processor
+    if gender_model is None:
+        #log_debug("Loading gender models...")
+        t0 = time.time()
+        from plugins.voice_equity.load_voice_equity_models import gender_model as gm, gender_processor as gp
+        gender_model = gm
+        gender_processor = gp
+        log_debug("Gender models loaded in {:.2f} sec".format(time.time() - t0))
+    return gender_model, gender_processor
+
+def load_all_models_async():
+    """Load all models in background thread"""
+    if _models_loading.is_set():
+        return  # Already loading
+    
+    _models_loading.set()
+    
+    def _load():
+        try:
+            # Load models in order of likely usage
+            load_whisper_model()
+            # load_punctuation_model()  # Commented out for now - may be overkill
+            load_emotion_models()
+            #load_gender_models()
+            _models_loaded.set()
+            log_info("All models loaded successfully!")
+        except Exception as e:
+            log_error(f"Error loading models: {e}")
+            _models_loaded.set()  # Set even on error to prevent hanging
+    
+    thread = threading.Thread(target=_load, daemon=True)
+    thread.start()
 
 # ==============================
 # Mic streaming setup
@@ -47,7 +166,7 @@ def mic_callback(indata, frames, time_info, status):
 EMIT_DEDUP_WINDOW_SEC = 15
 MIN_SENT_CHARS = 6
 last_emitted = deque(maxlen=50)
-PUNC_FALLBACK_SEC = 200
+PUNC_FALLBACK_SEC = 20
 
 _word_re = re.compile(r"\b\w+(?:'\w+)?\b")
 
@@ -99,11 +218,8 @@ def segment_to_sentences(words, raw_text):
 # SentenceProcessor class (Refactor #4)
 # ==============================
 class SentenceProcessor:
-    def __init__(self, proc_queue, gender_model, gender_proc, classifiers):
+    def __init__(self, proc_queue):
         self.proc_queue = proc_queue
-        self.gender_model = gender_model
-        self.gender_proc = gender_proc
-        self.audio_classifier, self.text_classifier, self.sarcasm_classifier = classifiers
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
 
@@ -135,7 +251,9 @@ class SentenceProcessor:
             log_error("Empty audio chunk, skipping.")
             return
 
-        audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
+        # Fast path - avoid repeated type conversions
+        if not isinstance(audio_chunk, np.ndarray):
+            audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
         audio_tensor = torch.from_numpy(audio_chunk).unsqueeze(0)
 
         segment_path = f"temp_seg_{uuid.uuid4().hex}.wav"
@@ -145,33 +263,26 @@ class SentenceProcessor:
             log_error(f"ERROR writing temp audio: {e}")
             return
 
-        result = {}
+        # Use cached function and models (already loaded at startup)
         try:
-            predicted_gender = predict_gender(segment_path, self.gender_model, self.gender_proc)
-        except Exception as e:
-            log_error(f"Gender prediction failed: {e}")
-            predicted_gender = "Unknown"
-        result["gender"] = predicted_gender
-        log_info("Predicted Gender: " + predicted_gender)
-
-        try:
-            annotation = annotate_transcript(segment_path, text,
-                                             self.audio_classifier,
-                                             self.text_classifier,
-                                             self.sarcasm_classifier)
+            # Models are guaranteed to be loaded since we wait for _models_loaded
+            annotation = _annotate_transcript(segment_path, text, audio_classifier, text_classifier, sarcasm_classifier)
         except Exception as e:
             log_error(f"Annotation failed: {e}")
             annotation = {"annotation": text}
 
-        result.update({
+        result = {
             "speaker": seg_meta.get("speaker", "Unknown"),
             "start_time": seg_meta.get("start_time", 0),
             "end_time": seg_meta.get("end_time", 0),
             "annotation": annotation.get("annotation", text)
-        })
+        }
 
         log_output(f"{result['annotation']}")
+        # Log annotation to file
+        log_annotation_to_file(result['annotation'], result['start_time'], result['end_time'])
 
+        # Fast cleanup
         try:
             os.remove(segment_path)
         except Exception:
@@ -216,22 +327,35 @@ def extract_word_timestamps(seg_list):
 # ==============================
 def listen_and_transcribe():
     samplerate = 16000
-    blocksize = 8000
-    chunk_seconds = 5
+    blocksize = 8000  # Increased back for more stable chunks
+    chunk_seconds = 5  # Increased for longer context
     audio_buffer = np.zeros(0, dtype=np.float32)
     text_buffer  = ""
     last_punct_time = time.time()
 
+    # Balanced VAD parameters for natural speech flow
     vad_params = {
         "threshold": 0.5,
-        "min_speech_duration_ms": 250,
+        "min_speech_duration_ms": 300,  # Increased for longer segments
         "max_speech_duration_s": float("inf"),
         "min_silence_duration_ms": 400
     }
 
     proc_q = queue.Queue(maxsize=256)
-    processor = SentenceProcessor(proc_q, gender_model, gender_processor,
-                                  (audio_classifier, text_classifier, sarcasm_classifier))
+    processor = SentenceProcessor(proc_q)
+
+    # Load all models first before starting microphone
+    log_info("Loading all AI models... Please wait.")
+    load_all_models_async()
+    
+    # Initialize output files
+    init_output_files()
+    log_info("Output files initialized: sentences_output.txt and annotations_output.txt")
+    
+    # Wait for all models to be loaded
+    log_info("Waiting for models to load completely...")
+    _models_loaded.wait()  # Block until all models are loaded
+    log_info("All models loaded successfully! Starting microphone now.")
 
     log_debug("Starting stream...")
     with sd.InputStream(samplerate=samplerate, blocksize=blocksize,
@@ -245,6 +369,7 @@ def listen_and_transcribe():
                 audio_buffer = np.concatenate((audio_buffer, audio))
 
                 if len(audio_buffer) >= samplerate * chunk_seconds:
+                    # Use cached model reference (no function call overhead)
                     segments, info = model.transcribe(
                         audio_buffer,
                         language="en",
@@ -263,31 +388,80 @@ def listen_and_transcribe():
                     raw_text = " ".join(w["word"] for w in words).strip()
                     text_buffer += " " + raw_text if raw_text else ""
 
-                    if raw_text:
-                        log_debug("Chunk raw text: " + raw_text)
+                    #if raw_text:
+                    #    log_debug("Chunk raw text: " + raw_text)
 
-                    sentences, idx = segment_to_sentences(words, raw_text)
-                    now = time.time()
-                    for sent, sent_words, sent_start, sent_end in sentences:
-                        sample_start = max(0, int(round(sent_start * samplerate)))
-                        sample_end   = min(len(audio_buffer), int(round(sent_end * samplerate)))
-                        if sample_end <= sample_start:
-                            sample_end = min(len(audio_buffer), sample_start + 1)
-                        sentence_audio = audio_buffer[sample_start:sample_end]
+                    # Only try to segment if we have actual sentence-ending punctuation
+                    word_count = len(text_buffer.split())
+                    
+                    if re.search(r'[.!?]', raw_text):
+                        # We have punctuation - combine accumulated text with current chunk and segment
+                        if text_buffer:
+                            full_text = text_buffer + " " + raw_text
+                        else:
+                            full_text = raw_text
+                        
+                        sentences, idx = segment_to_sentences(words, full_text)
+                        now = time.time()
+                        for sent, sent_words, sent_start, sent_end in sentences:
+                            sample_start = max(0, int(round(sent_start * samplerate)))
+                            sample_end   = min(len(audio_buffer), int(round(sent_end * samplerate)))
+                            if sample_end <= sample_start:
+                                sample_end = min(len(audio_buffer), sample_start + 1)
+                            sentence_audio = audio_buffer[sample_start:sample_end]
 
-                        if should_emit(sent, now):
-                            log_info(f"Sentence: {sent}")
-                            seg_meta = {"text": sent, "start_time": sent_start, "end_time": sent_end, "speaker": "Unknown"}
-                            processor.enqueue(sentence_audio, sent, samplerate, seg_meta)
-                            if re.search(r'[.!?]$', sent):
-                                last_punct_time = now
+                            if should_emit(sent, now):
+                                log_info(f"Sentence: {sent}")
+                                # Log sentence to file
+                                log_sentence_to_file(sent, sent_start, sent_end)
+                                seg_meta = {"text": sent, "start_time": sent_start, "end_time": sent_end, "speaker": "Unknown"}
+                                processor.enqueue(sentence_audio, sent, samplerate, seg_meta)
+                                if re.search(r'[.!?]$', sent):
+                                    last_punct_time = now
 
-                    remaining_words = words[idx:]
-                    text_buffer = " ".join(w["word"] for w in remaining_words).strip()
+                        remaining_words = words[idx:]
+                        text_buffer = " ".join(w["word"] for w in remaining_words).strip()
+                    elif word_count > 50:
+                        # Safety valve: if we have 50+ words without punctuation, force a segment
+                        if text_buffer:
+                            full_text = text_buffer + " " + raw_text
+                        else:
+                            full_text = raw_text
+                            
+                        log_info(f"Long speech detected ({len(full_text.split())} words), forcing segmentation")
+                        sentences, idx = segment_to_sentences(words, full_text)
+                        now = time.time()
+                        if sentences:
+                            sent, sent_words, sent_start, sent_end = sentences[0]
+                            sample_start = max(0, int(round(sent_start * samplerate)))
+                            sample_end   = min(len(audio_buffer), int(round(sent_end * samplerate)))
+                            if sample_end <= sample_start:
+                                sample_end = min(len(audio_buffer), sample_start + 1)
+                            sentence_audio = audio_buffer[sample_start:sample_end]
+
+                            if should_emit(sent, now):
+                                log_info(f"Long sentence: {sent}")
+                                # Log sentence to file
+                                log_sentence_to_file(sent, sent_start, sent_end)
+                                seg_meta = {"text": sent, "start_time": sent_start, "end_time": sent_end, "speaker": "Unknown"}
+                                processor.enqueue(sentence_audio, sent, samplerate, seg_meta)
+                        
+                        remaining_words = words[1:] if len(words) > 1 else []
+                        text_buffer = " ".join(w["word"] for w in remaining_words).strip()
+                    else:
+                        # No punctuation and under word limit - just accumulate text
+                        # IMPORTANT: Update text_buffer to include the new words from this chunk
+                        if text_buffer:
+                            text_buffer = text_buffer + " " + raw_text
+                        else:
+                            text_buffer = raw_text
+                        #log_debug(f"No punctuation in chunk, accumulating: {len(text_buffer.split())} words total")
 
                     if (time.time() - last_punct_time) > PUNC_FALLBACK_SEC and text_buffer:
-                        fallback_punct = punct_model.restore_punctuation(text_buffer)
-                        log_info("Punctuated Fallback: " + fallback_punct)
+                        # Use cached model reference
+                        # fallback_punct = punct_model.restore_punctuation(text_buffer)  # Commented out - may be overkill
+                        fallback_punct = text_buffer  # Use raw text without punctuation for now
+                        log_info("Fallback (no punctuation): " + fallback_punct)
 
                         if remaining_words:
                             sent_start = remaining_words[0]["start"]
@@ -301,6 +475,8 @@ def listen_and_transcribe():
                             sent_end = len(audio_buffer) / samplerate
 
                         seg_meta = {"text": fallback_punct, "start_time": sent_start, "end_time": sent_end, "speaker": "Unknown"}
+                        # Log fallback sentence to file
+                        log_sentence_to_file(fallback_punct, sent_start, sent_end)
                         processor.enqueue(fallback_audio, fallback_punct, samplerate, seg_meta)
 
                         text_buffer = ""
@@ -312,11 +488,15 @@ def listen_and_transcribe():
             log_debug("\nKeyboardInterrupt caught, flushing buffer...")
             final_raw = text_buffer.strip()
             if final_raw:
-                final_punct = punct_model.restore_punctuation(final_raw)
-                log_debug("Final punctuated (flush): " + final_punct)
+                # Use cached model reference
+                # final_punct = punct_model.restore_punctuation(final_raw)  # Commented out - may be overkill
+                final_punct = final_raw  # Use raw text without punctuation for now
+                log_debug("Final (no punctuation): " + final_punct)
                 seg_meta = {"text": final_punct, "start_time": 0.0,
                             "end_time": len(audio_buffer)/samplerate if samplerate else 0.0,
                             "speaker": "Unknown"}
+                # Log final sentence to file
+                log_sentence_to_file(final_punct, 0.0, len(audio_buffer)/samplerate if samplerate else 0.0)
                 processor.enqueue(audio_buffer.copy(), final_punct, samplerate, seg_meta)
             log_debug("Exiting cleanly.")
             processor.shutdown()

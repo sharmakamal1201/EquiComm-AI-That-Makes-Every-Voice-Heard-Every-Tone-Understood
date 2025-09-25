@@ -27,7 +27,7 @@ def detect_emotion_text(text, text_classifier, sarcasm_classifier):
 
         if top_sarcasm['label'].lower() == 'sarcasm' and top_sarcasm['score'] > sarcasm_threshold:
             emotion_dict['sarcasm'] = round(float(top_sarcasm['score']*0.8), 2) # slightly down-weighting
-        log_debug("Text Classification results: " + str(emotion_dict))
+        #log_debug("Text Classification results: " + str(emotion_dict))
         if emotion_dict:
             return emotion_dict
         else:

@@ -31,7 +31,7 @@ def detect_emotion_audio(audio_file, audio_classifier):
                 if r['label'] == 'neutral':
                     r['score'] = round(r['score'] * 0.7, 2)
 
-            log_debug(f"Audio Classification results: {mapped_results}")
+            #log_debug(f"Audio Classification results: {mapped_results}")
             return {r['label']: r['score'] for r in mapped_results}
         else:
             return None

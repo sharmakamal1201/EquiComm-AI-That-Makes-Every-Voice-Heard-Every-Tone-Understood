@@ -77,6 +77,6 @@ def annotate_transcript(AUDIO_FILE, text, audio_classifier, text_classifier, sar
     annotation["annotation"] = f"{text} {emoji}"
     annotation["emotion"] = ','.join(top_emotions)
     annotation["confidence"] = {e: round(float(emotions[e]), 2) for e in top_emotions}
-    log_debug("Transcript annotation completed: " + str(annotation))
+    #log_debug("Transcript annotation completed: " + str(annotation))
 
     return annotation

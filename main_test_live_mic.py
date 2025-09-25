@@ -355,7 +355,21 @@ def listen_and_transcribe():
     # Wait for all models to be loaded
     log_info("Waiting for models to load completely...")
     _models_loaded.wait()  # Block until all models are loaded
-    log_info("All models loaded successfully! Starting microphone now.")
+    log_info("All models loaded successfully!")
+    
+    # Ask for user input before starting microphone
+    print("\n" + "="*60)
+    log_info("EquiComm Real-Time Transcription Ready!")
+    print("="*60)
+    log_info("Press Ctrl+C to stop recording")
+    print("="*60)
+    
+    user_input = input("\n🚀 Press Enter to start microphone (or type 'config' for settings): ").strip().lower()
+    
+    if user_input == 'config':
+        log_info("\nPress Enter to continue with current settings...")
+    
+    log_info("\nStarting microphone... Speak naturally!")
 
     log_debug("Starting stream...")
     with sd.InputStream(samplerate=samplerate, blocksize=blocksize,
@@ -386,21 +400,27 @@ def listen_and_transcribe():
                     seg_list = list(segments)
                     words = extract_word_timestamps(seg_list)
                     raw_text = " ".join(w["word"] for w in words).strip()
-                    text_buffer += " " + raw_text if raw_text else ""
+                    # Don't add to text_buffer here - we'll do it conditionally below
 
                     #if raw_text:
                     #    log_debug("Chunk raw text: " + raw_text)
 
                     # Only try to segment if we have actual sentence-ending punctuation
                     word_count = len(text_buffer.split())
+                    remaining_words = words  # Initialize with all words
                     
-                    if re.search(r'[.!?]', raw_text):
-                        # We have punctuation - combine accumulated text with current chunk and segment
-                        if text_buffer:
-                            full_text = text_buffer + " " + raw_text
-                        else:
-                            full_text = raw_text
-                        
+                    # Combine accumulated text with current chunk
+                    if text_buffer and raw_text:
+                        full_text = text_buffer + " " + raw_text
+                    elif raw_text:
+                        full_text = raw_text
+                    elif text_buffer:
+                        full_text = text_buffer
+                    else:
+                        full_text = ""
+                    
+                    if re.search(r'[.!?]', full_text):
+                        # We have punctuation in combined text - segment it
                         sentences, idx = segment_to_sentences(words, full_text)
                         now = time.time()
                         for sent, sent_words, sent_start, sent_end in sentences:
@@ -421,13 +441,8 @@ def listen_and_transcribe():
 
                         remaining_words = words[idx:]
                         text_buffer = " ".join(w["word"] for w in remaining_words).strip()
-                    elif word_count > 50:
+                    elif len(full_text.split()) > 50:
                         # Safety valve: if we have 50+ words without punctuation, force a segment
-                        if text_buffer:
-                            full_text = text_buffer + " " + raw_text
-                        else:
-                            full_text = raw_text
-                            
                         log_info(f"Long speech detected ({len(full_text.split())} words), forcing segmentation")
                         sentences, idx = segment_to_sentences(words, full_text)
                         now = time.time()
@@ -450,12 +465,8 @@ def listen_and_transcribe():
                         text_buffer = " ".join(w["word"] for w in remaining_words).strip()
                     else:
                         # No punctuation and under word limit - just accumulate text
-                        # IMPORTANT: Update text_buffer to include the new words from this chunk
-                        if text_buffer:
-                            text_buffer = text_buffer + " " + raw_text
-                        else:
-                            text_buffer = raw_text
-                        #log_debug(f"No punctuation in chunk, accumulating: {len(text_buffer.split())} words total")
+                        text_buffer = full_text
+                        log_debug(f"No punctuation in accumulated text, total: {len(text_buffer.split())} words")
 
                     if (time.time() - last_punct_time) > PUNC_FALLBACK_SEC and text_buffer:
                         # Use cached model reference
@@ -463,9 +474,9 @@ def listen_and_transcribe():
                         fallback_punct = text_buffer  # Use raw text without punctuation for now
                         log_info("Fallback (no punctuation): " + fallback_punct)
 
-                        if remaining_words:
-                            sent_start = remaining_words[0]["start"]
-                            sent_end   = remaining_words[-1]["end"]
+                        if words and len(words) > 0:
+                            sent_start = words[0]["start"]
+                            sent_end   = words[-1]["end"]
                             sample_start = max(0, int(round(sent_start * samplerate)))
                             sample_end   = min(len(audio_buffer), int(round(sent_end * samplerate)))
                             fallback_audio = audio_buffer[sample_start:sample_end]

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocab Normalizer Tester</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .input-section {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #34495e;
+        }
+        
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #bdc3c7;
+            border-radius: 5px;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        .results-section {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .result-box {
+            margin-bottom: 20px;
+        }
+        
+        .result-label {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+        
+        .result-content {
+            padding: 12px;
+            background: white;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            line-height: 1.6;
+        }
+        
+        .highlighted-text {
+            text-decoration: underline;
+            text-decoration-color: #e74c3c;
+            text-decoration-thickness: 2px;
+            background-color: #fff3cd;
+            padding: 2px 4px;
+            border-radius: 3px;
+            cursor: help;
+            position: relative;
+        }
+        
+        .tooltip {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #2c3e50;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: #2c3e50;
+        }
+        
+        .highlighted-text:hover .tooltip {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .changes-info {
+            color: #27ae60;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        
+        .no-changes {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+        
+        .error {
+            color: #e74c3c;
+            background-color: #fadbd8;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #3498db;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌍 Vocab Normalizer Tester</h1>
+        
+        <div class="input-section">
+            <label for="inputText">Enter text with regional idioms or colloquialisms:</label>
+            <textarea id="inputText" rows="4" placeholder="e.g., Let's table this discussion and circle back later. I'll call you at half five."></textarea>
+            <button onclick="testNormalizer()" id="testBtn">Test Normalization</button>
+        </div>
+        
+        <div class="results-section" id="resultsSection">
+            <div class="result-box">
+                <div class="result-label">📝 Original Text:</div>
+                <div class="result-content" id="originalText"></div>
+            </div>
+            
+            <div class="result-box">
+                <div class="result-label">✨ Normalized Text (with highlights):</div>
+                <div class="result-content" id="highlightedText"></div>
+            </div>
+            
+            <div class="result-box">
+                <div class="result-label">🔄 Changes Made:</div>
+                <div class="result-content" id="changesText"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Sample test data for demonstration
+        const sampleResults = {
+            "Let's table this discussion and circle back later.": {
+                original: "Let's table this discussion and circle back later.",
+                alternate: "Let's postpone this discussion and revisit it later.",
+                changed: "table this discussion → postpone this discussion, circle back → revisit it"
+            },
+            "I'll call you at half five to discuss the project.": {
+                original: "I'll call you at half five to discuss the project.",
+                alternate: "I'll call you at 5:30 to discuss the project.",
+                changed: "half five → 5:30"
+            },
+            "He passed out after the party and then passed out of college.": {
+                original: "He passed out after the party and then passed out of college.",
+                alternate: "He fainted after the party and then graduated from college.",
+                changed: "passed out → fainted, passed out of college → graduated from college"
+            },
+            "We discussed the project yesterday.": {
+                original: "We discussed the project yesterday.",
+                alternate: "We discussed the project yesterday.",
+                changed: "None"
+            }
+        };
+
+        function parseChanges(changedString) {
+            if (changedString === 'None' || !changedString) {
+                return [];
+            }
+            
+            // Parse CSV-like changes: "original → replacement, original2 → replacement2"
+            const changes = [];
+            const parts = changedString.split(',');
+            
+            for (let part of parts) {
+                part = part.trim();
+                if (part.includes('→')) {
+                    const [original, replacement] = part.split('→').map(s => s.trim());
+                    changes.push({ original, replacement });
+                }
+            }
+            
+            return changes;
+        }
+
+        function highlightText(originalText, alternateText, changes) {
+            if (changes.length === 0) {
+                return originalText;
+            }
+            
+            let highlightedText = originalText;
+            
+            // Sort changes by length (longest first) to avoid partial replacements
+            changes.sort((a, b) => b.original.length - a.original.length);
+            
+            for (let change of changes) {
+                const regex = new RegExp(`\\b${escapeRegex(change.original)}\\b`, 'gi');
+                highlightedText = highlightedText.replace(regex, (match) => {
+                    return `<span class="highlighted-text">${match}<div class="tooltip">Changed to: "${change.replacement}"</div></span>`;
+                });
+            }
+            
+            return highlightedText;
+        }
+
+        function escapeRegex(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        async function testNormalizer() {
+            const inputText = document.getElementById('inputText').value.trim();
+            const testBtn = document.getElementById('testBtn');
+            const resultsSection = document.getElementById('resultsSection');
+            
+            if (!inputText) {
+                alert('Please enter some text to test!');
+                return;
+            }
+            
+            // Show loading state
+            testBtn.disabled = true;
+            testBtn.textContent = 'Processing...';
+            resultsSection.style.display = 'block';
+            document.getElementById('originalText').innerHTML = '<div class="loading">Processing...</div>';
+            document.getElementById('highlightedText').innerHTML = '<div class="loading">Processing...</div>';
+            document.getElementById('changesText').innerHTML = '<div class="loading">Processing...</div>';
+            
+            try {
+                // Call the API
+                const response = await fetch('/api/normalize', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: inputText })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`API Error: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+                
+                // Parse the changes
+                const changes = parseChanges(result.changed);
+                
+                // Update the UI
+                document.getElementById('originalText').textContent = result.original;
+                
+                const highlightedText = highlightText(result.original, result.alternate, changes);
+                document.getElementById('highlightedText').innerHTML = highlightedText;
+                
+                if (result.changed === 'None' || !result.changed) {
+                    document.getElementById('changesText').innerHTML = '<span class="no-changes">No regional expressions found to normalize</span>';
+                } else {
+                    document.getElementById('changesText').innerHTML = `<span class="changes-info">${result.changed}</span>`;
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('originalText').innerHTML = '<div class="error">Error processing text</div>';
+                document.getElementById('highlightedText').innerHTML = '<div class="error">Error processing text</div>';
+                document.getElementById('changesText').innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            } finally {
+                testBtn.disabled = false;
+                testBtn.textContent = 'Test Normalization';
+            }
+        }
+
+        // Add some sample text on page load
+        window.addEventListener('load', () => {
+            document.getElementById('inputText').value = "Let's table this discussion and circle back later.";
+        });
+    </script>
+</body>
+</html>
